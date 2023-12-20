@@ -7,7 +7,7 @@ use std::env;
 #[macro_use]
 extern crate serde_derive;
 
-// Model: User struct with id, name, email,
+//Model: User struct with id, name, email
 #[derive(Serialize, Deserialize)]
 struct User {
     id: Option<i32>,
@@ -15,7 +15,7 @@ struct User {
     email: String,
 }
 
-// Database URL
+//DATABASE URL
 const DB_URL: &str = env!("DATABASE_URL");
 
 //constants
@@ -24,13 +24,15 @@ const OK_RESPONSE: &str =
 const NOT_FOUND: &str = "HTTP/1.1 404 NOT FOUND\r\n\r\n";
 const INTERNAL_ERROR: &str = "HTTP/1.1 500 INTERNAL ERROR\r\n\r\n";
 
-// main function
+//main function
 fn main() {
+    //Set Database
     if let Err(_) = set_database() {
         println!("Error setting database");
         return;
     }
 
+    //start server and print port
     let listener = TcpListener::bind(format!("0.0.0.0:8080")).unwrap();
     println!("Server listening on port 8080");
 
@@ -46,32 +48,32 @@ fn main() {
     }
 }
 
-// db setup
+//db setup
 fn set_database() -> Result<(), PostgresError> {
     let mut client = Client::connect(DB_URL, NoTls)?;
     client.batch_execute(
         "
-            CREATE TABLE IF EXISTS users (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR NOT NULL,
-                email VARCHAR NOT NULL
-            )
-        "
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            email VARCHAR NOT NULL
+        )
+    "
     )?;
     Ok(())
 }
 
-// get Id from request URL
+//Get id from request URL
 fn get_id(request: &str) -> &str {
     request.split("/").nth(4).unwrap_or_default().split_whitespace().next().unwrap_or_default()
 }
 
-// deserialize user from request body without id
+//deserialize user from request body without id
 fn get_user_request_body(request: &str) -> Result<User, serde_json::Error> {
     serde_json::from_str(request.split("\r\n\r\n").last().unwrap_or_default())
 }
 
-// handle requests
+//handle requests
 fn handle_client(mut stream: TcpStream) {
     let mut buffer = [0; 1024];
     let mut request = String::new();
@@ -89,13 +91,14 @@ fn handle_client(mut stream: TcpStream) {
                 r if r.starts_with("DELETE /api/rust/users/") => handle_delete_request(r),
                 _ => (NOT_FOUND.to_string(), "404 not found".to_string()),
             };
+
             stream.write_all(format!("{}{}", status_line, content).as_bytes()).unwrap();
         }
         Err(e) => eprintln!("Unable to read stream: {}", e),
     }
 }
 
-// handle post request
+//handle post request
 fn handle_post_request(request: &str) -> (String, String) {
     match (get_user_request_body(request), Client::connect(DB_URL, NoTls)) {
         (Ok(user), Ok(mut client)) => {
@@ -128,13 +131,14 @@ fn handle_post_request(request: &str) -> (String, String) {
     }
 }
 
+//handle get request
 fn handle_get_request(request: &str) -> (String, String) {
     match (get_id(&request).parse::<i32>(), Client::connect(DB_URL, NoTls)) {
         (Ok(id), Ok(mut client)) =>
             match client.query_one("SELECT * FROM users WHERE id = $1", &[&id]) {
                 Ok(row) => {
                     let user = User {
-                        id: Some(row.get(0)),
+                        id: row.get(0),
                         name: row.get(1),
                         email: row.get(2),
                     };
@@ -143,14 +147,16 @@ fn handle_get_request(request: &str) -> (String, String) {
                 }
                 _ => (NOT_FOUND.to_string(), "User not found".to_string()),
             }
+
         _ => (INTERNAL_ERROR.to_string(), "Internal error".to_string()),
     }
 }
 
+//handle get all request
 fn handle_get_all_request(_request: &str) -> (String, String) {
     match Client::connect(DB_URL, NoTls) {
         Ok(mut client) => {
-            let mut users = Vec::new();
+            let mut users = Vec::new(); // Vector to store the users
 
             for row in client.query("SELECT id, name, email FROM users", &[]).unwrap() {
                 users.push(User {
@@ -166,6 +172,7 @@ fn handle_get_all_request(_request: &str) -> (String, String) {
     }
 }
 
+//handle put request
 fn handle_put_request(request: &str) -> (String, String) {
     match
         (
@@ -177,26 +184,29 @@ fn handle_put_request(request: &str) -> (String, String) {
         (Ok(id), Ok(user), Ok(mut client)) => {
             client
                 .execute(
-                    "UPDATE users SET name = $1, email = $2 where id = $3",
+                    "UPDATE users SET name = $1, email = $2 WHERE id = $3",
                     &[&user.name, &user.email, &id]
                 )
                 .unwrap();
+
             (OK_RESPONSE.to_string(), "User updated".to_string())
         }
         _ => (INTERNAL_ERROR.to_string(), "Internal error".to_string()),
     }
 }
 
+//handle delete request
 fn handle_delete_request(request: &str) -> (String, String) {
-    match(get_id(&request).parse::<i32>(), Client::connect(DB_URL, NoTls)) {
+    match (get_id(&request).parse::<i32>(), Client::connect(DB_URL, NoTls)) {
         (Ok(id), Ok(mut client)) => {
             let rows_affected = client.execute("DELETE FROM users WHERE id = $1", &[&id]).unwrap();
 
+            //if rows affected is 0, user not found
             if rows_affected == 0 {
                 return (NOT_FOUND.to_string(), "User not found".to_string());
             }
 
-            (OK_RESPONSE.to_string(), "User updated".to_string())
+            (OK_RESPONSE.to_string(), "User deleted".to_string())
         }
         _ => (INTERNAL_ERROR.to_string(), "Internal error".to_string()),
     }
